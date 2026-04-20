@@ -3,10 +3,10 @@ import { useScrollProgress } from '../context/ScrollContext';
 
 const TOTAL_FRAMES = 200; // Matches Python script output
 const FRAME_DIR = '/frames-webp';
-const SCROLL_SPEED_WHEEL = 0.15;
-const SCROLL_SPEED_TOUCH = 0.65;
-const LERP_SPEED = 0.1;
+const LERP_SPEED = 0.08; // slightly slower for smoother large transitions
 const PAGE_COUNT = 5; // Hero, Assembly, Portfolio, Journal, Footer
+const WHEEL_COOLDOWN = 1000; // ms between wheel snap actions
+const TOUCH_COOLDOWN = 800; // ms between touch snap actions
 
 export const ScrollCanvas: React.FC = () => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -19,10 +19,13 @@ export const ScrollCanvas: React.FC = () => {
   const stateRef = useRef({
     currentFrame: 0,
     targetFrame: 0,
+    currentPage: 0,
     images: new Array(TOTAL_FRAMES).fill(null) as (HTMLImageElement | null)[],
     isReady: false,
     rafStarted: false,
     lastTouchY: 0,
+    lastWheelTime: 0,
+    lastTouchTime: 0,
   });
 
   // 1. Load Frames
@@ -159,45 +162,62 @@ export const ScrollCanvas: React.FC = () => {
     return () => window.removeEventListener('resize', resize);
   }, []);
 
-  // 3. User Input Listeners
+  // 3. User Input Listeners (Snap-Scrolling)
   useEffect(() => {
+    const changePage = (directionIndicator: number) => {
+      const s = stateRef.current;
+      const targetPage = Math.max(0, Math.min(PAGE_COUNT - 1, s.currentPage + directionIndicator));
+      if (targetPage !== s.currentPage) {
+        s.currentPage = targetPage;
+        // Snap explicitly to the frame index correlating to the page.
+        s.targetFrame = targetPage * ((TOTAL_FRAMES - 1) / (PAGE_COUNT - 1));
+      }
+    };
+
     const onWheel = (e: WheelEvent) => {
       const s = stateRef.current;
       if (!s.isReady) return;
-      let delta = e.deltaY;
-      if (e.deltaMode === 1) delta *= 30; // DOM_DELTA_LINE
-      if (e.deltaMode === 2) delta *= window.innerHeight; // DOM_DELTA_PAGE
-      s.targetFrame += delta * SCROLL_SPEED_WHEEL;
       
-      const cap = Math.max(0, TOTAL_FRAMES - 1);
-      s.targetFrame = Math.max(0, Math.min(s.targetFrame, cap));
+      const now = performance.now();
+      if (now - s.lastWheelTime < WHEEL_COOLDOWN) return;
+      
+      // Ignore very small movements (magic mouse subtle touches)
+      if (Math.abs(e.deltaY) < 20) return; 
+
+      changePage(e.deltaY > 0 ? 1 : -1);
+      s.lastWheelTime = now;
     };
 
     const onTouchStart = (e: TouchEvent) => {
-      stateRef.current.lastTouchY = e.touches[0].clientY;
+      const s = stateRef.current;
+      s.lastTouchY = e.touches[0].clientY;
     };
 
-    const onTouchMove = (e: TouchEvent) => {
+    const onTouchEnd = (e: TouchEvent) => {
       const s = stateRef.current;
       if (!s.isReady) return;
-      const y = e.touches[0].clientY;
-      const dy = s.lastTouchY - y;
-      s.lastTouchY = y;
-      s.targetFrame += dy * SCROLL_SPEED_TOUCH;
+
+      const now = performance.now();
+      if (now - s.lastTouchTime < TOUCH_COOLDOWN) return;
+
+      const currentY = e.changedTouches[0].clientY;
+      const dy = s.lastTouchY - currentY; // positive = dragged up = scroll down
       
-      const cap = Math.max(0, TOTAL_FRAMES - 1);
-      s.targetFrame = Math.max(0, Math.min(s.targetFrame, cap));
+      if (Math.abs(dy) > 50) { // Threshold for valid swipe
+        changePage(dy > 0 ? 1 : -1);
+        s.lastTouchTime = now;
+      }
     };
 
-    // Use passive: false where necessary, but true is better for performance if preventDefault isn't needed.
+    // We can use passive: false if we want to preventDefault, but we just want to track intentions.
     window.addEventListener('wheel', onWheel, { passive: true });
     window.addEventListener('touchstart', onTouchStart, { passive: true });
-    window.addEventListener('touchmove', onTouchMove, { passive: true });
+    window.addEventListener('touchend', onTouchEnd, { passive: true });
 
     return () => {
       window.removeEventListener('wheel', onWheel);
       window.removeEventListener('touchstart', onTouchStart);
-      window.removeEventListener('touchmove', onTouchMove);
+      window.removeEventListener('touchend', onTouchEnd);
     };
   }, []);
 
