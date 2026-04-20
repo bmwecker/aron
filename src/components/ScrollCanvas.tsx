@@ -5,7 +5,7 @@ const TOTAL_FRAMES = 200; // Matches Python script output
 const FRAME_DIR = '/frames-webp';
 const LERP_SPEED = 0.08; // slightly slower for smoother large transitions
 const PAGE_COUNT = 5; // Hero, Assembly, Portfolio, Journal, Footer
-const WHEEL_COOLDOWN = 1000; // ms between wheel snap actions
+const SCROLL_SPEED_WHEEL = 0.03; // Stretched out, slow scroll for PC
 const TOUCH_COOLDOWN = 800; // ms between touch snap actions
 
 export const ScrollCanvas: React.FC = () => {
@@ -178,14 +178,17 @@ export const ScrollCanvas: React.FC = () => {
       const s = stateRef.current;
       if (!s.isReady) return;
       
-      const now = performance.now();
-      if (now - s.lastWheelTime < WHEEL_COOLDOWN) return;
+      let delta = e.deltaY;
+      if (e.deltaMode === 1) delta *= 30;
+      if (e.deltaMode === 2) delta *= window.innerHeight;
       
-      // Ignore very small movements (magic mouse subtle touches)
-      if (Math.abs(e.deltaY) < 20) return; 
-
-      changePage(e.deltaY > 0 ? 1 : -1);
-      s.lastWheelTime = now;
+      // Continuous, stretched scroll for PC
+      s.targetFrame += delta * SCROLL_SPEED_WHEEL;
+      const cap = Math.max(0, TOTAL_FRAMES - 1);
+      s.targetFrame = Math.max(0, Math.min(s.targetFrame, cap));
+      
+      // Keep currentPage in sync for touch gestures
+      s.currentPage = Math.min(PAGE_COUNT - 1, Math.max(0, Math.round(s.targetFrame / (TOTAL_FRAMES / PAGE_COUNT))));
     };
 
     const onTouchStart = (e: TouchEvent) => {
